@@ -56,7 +56,6 @@ static int loadData(float *x, float *y) {
   hsize_t input_dims[xndims];
   H5Sget_simple_extent_dims(xspace, input_dims, NULL);
   if (input_dims[0] != FLAGS_batch_size) {
-    std::cout << input_dims[0] << "    " << FLAGS_batch_size << "\n";
     std::cout << "data size does not match batch size specified!\n";
     return 1; // return error
   }
@@ -388,33 +387,33 @@ __global__ void argmax(const float *X, int *Y)
 
 // Choose the guess with largest score
 void argmax(const float *X, const int xdims[2], int *Y) {
-  // for (const auto i : range(0, xdims[0])) {
-  //   auto max_idx = 0;
-  //   auto max     = X[i * xdims[1]];
-  //   for (const auto j : range(0, xdims[1])) {
-  //     const auto elem = X[(i * xdims[1]) + j];
-  //     if (elem > max) {
-  //       max_idx = j;
-  //       max     = elem;
-  //     }
-  //   }
-  //   Y[i] = max_idx;
-  // }
+  for (const auto i : range(0, xdims[0])) {
+    auto max_idx = 0;
+    auto max     = X[i * xdims[1]];
+    for (const auto j : range(0, xdims[1])) {
+      const auto elem = X[(i * xdims[1]) + j];
+      if (elem > max) {
+        max_idx = j;
+        max     = elem;
+      }
+    }
+    Y[i] = max_idx;
+  }
 
-  float* d_input_img;
-  int* argout;
-  cudaMalloc((void **) &d_input_img, sizeof(float) * xdims[0] * xdims[1]);
-  cudaMalloc((void **) &argout, sizeof(int) * xdims[0]);
-  cudaMemcpy(d_input_img, X, sizeof(float) * xdims[0] * xdims[1], cudaMemcpyHostToDevice);
+  // float* d_input_img;
+  // int* argout;
+  // cudaMalloc((void **) &d_input_img, sizeof(float) * xdims[0] * xdims[1]);
+  // cudaMalloc((void **) &argout, sizeof(int) * xdims[0]);
+  // cudaMemcpy(d_input_img, X, sizeof(float) * xdims[0] * xdims[1], cudaMemcpyHostToDevice);
 
-  dim3 dimGrid(xdims[0], 1,1);
-  dim3 dimBlock(1,1,1);
+  // dim3 dimGrid(xdims[0], 1,1);
+  // dim3 dimBlock(1,1,1);
 
-  argmax<<<dimGrid,dimBlock>>>(d_input_img, argout);
-  cudaMemcpy(Y, argout, sizeof(int)*xdims[0], cudaMemcpyDeviceToHost);
+  // argmax<<<dimGrid,dimBlock>>>(d_input_img, argout);
+  // cudaMemcpy(Y, argout, sizeof(int)*xdims[0], cudaMemcpyDeviceToHost);
 
-  cudaFree(argout);
-  cudaFree(d_input_img);
+  // cudaFree(argout);
+  // cudaFree(d_input_img);
 }
 
 // Forward operation for the CNN, a combination of conv layer + average pooling
@@ -561,3 +560,4 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+

@@ -1,4 +1,3 @@
-
 cmake_minimum_required(VERSION 3.0)
 
 if (POLICY CMP0007)
@@ -25,13 +24,17 @@ if (CONFIG_USE_HUNTER)
     )
 endif (CONFIG_USE_HUNTER)
 
+if(NOT CMAKE_BUILD_TYPE) 
+  set(CMAKE_BUILD_TYPE Release)
+endif(NOT CMAKE_BUILD_TYPE)
+
 project(ECE408Project)
 
 
 include(CMakeToolsHelpers OPTIONAL)
 
 if (UNIX AND NOT APPLE)
-    set(LINUX TRUE)
+  set(LINUX TRUE)
 endif (UNIX AND NOT APPLE)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules ${CMAKE_MODULE_PATH})
@@ -75,21 +78,28 @@ set(CUDA_PROPAGATE_HOST_FLAGS TRUE)
 # with 'set' and change the value of COMPUTE_CAPABILITY to one of the following
 # hardware architectures: Tesla-class '11', '12', or '13'; Fermi-class '20'
 # or '21'; Kepler-class '30', '32', '35'; or Maxwell-class '50' or '52'
-CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS 3.0 3.5+PTX 5.0 Maxwell 6.1)
+CUDA_SELECT_NVCC_ARCH_FLAGS(ARCH_FLAGS 3.7)
 list(APPEND CUDA_NVCC_FLAGS ${ARCH_FLAGS})
 
-# Set warning levels for host compilation
-if (UNIX)
-    add_compile_options(-Wextra)
-    add_compile_options(-Wno-unused-function)
-    add_compile_options(-Wno-unused-parameter)
-    add_compile_options(-Wno-unused-parameter)
-    add_compile_options(-Wno-vla)
-    add_compile_options(-Wno-unused-variable)
-endif (UNIX)
+message("CMAKE_BUILD_TYPE = ${CMAKE_BUILD_TYPE}")
+
+add_compile_options(-Wextra)
+add_compile_options(-Wno-unused-function)
+add_compile_options(-Wno-unused-parameter)
+add_compile_options(-Wno-unused-parameter)
+add_compile_options(-Wno-vla)
+add_compile_options(-Wno-unused-variable)
+list(APPEND CUDA_NVCC_FLAGS -O3)
+list(APPEND CUDA_NVCC_FLAGS -use_fast_math)
+list(APPEND CUDA_NVCC_FLAGS -Xptxas --verbose)
+list(APPEND CUDA_NVCC_FLAGS -Xptxas --warn-on-double-precision-use)
+list(APPEND CUDA_NVCC_FLAGS -Xptxas --warn-on-local-memory-usage)
+list(APPEND CUDA_NVCC_FLAGS -Xptxas --warn-on-spills)
 
 # Add debugging to CUDA NVCC flags (for NVidia's NSight tools)
-set(CUDA_NVCC_FLAGS_DEBUG ${CUDA_NVCC_FLAGS_DEBUG} "-G")
+if(CMAKE_BUILD_TYPE MATCHES DEBUG)
+  Set(CUDA_NVCC_FLAGS_DEBUG ${CUDA_NVCC_FLAGS_DEBUG} "-G")
+endif(CMAKE_BUILD_TYPE MATCHES DEBUG)
 
 ################################
 ################################
