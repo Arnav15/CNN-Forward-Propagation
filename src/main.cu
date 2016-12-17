@@ -351,9 +351,11 @@ __global__ void matrixMultiplyShared1(float *B, float *C,
         C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns) + (blockIdx.x * blockDim.x) + threadIdx.x] = CValue;
 }
 
+
 /*-----------------------------END OF KERNELS---------------------------------*/
 
 /*----------------------START OF SEQUENTIAL FUNCTIONS-------------------------*/
+
 void unroll_filter(const float * W, float * w, int M, int C) {
 
     for(int row = 0; row < KERNEL_WIDTH; row++) 
@@ -453,7 +455,6 @@ static void conv_forward_valid(const float *X, const int xdims[4],
     }
     
     cudaMalloc((void**) &device_output, ydims[0] * y_batch_size * sizeof(float));
-    cudaMalloc((void **) &filter, filter_height * filter_width * sizeof(float));
 
     float * w_unrolled = (float *) malloc(filter_height * filter_width * sizeof(float));
 
@@ -462,7 +463,10 @@ static void conv_forward_valid(const float *X, const int xdims[4],
     if(wdims[2] == 1)
         cudaMemcpyToSymbol(filter1, w_unrolled, filter_height * filter_width * sizeof(float));
     else
+    {
+        cudaMalloc((void **) &filter, filter_height * filter_width * sizeof(float));
         cudaMemcpy(filter, w_unrolled, filter_height * filter_width * sizeof(float), cudaMemcpyHostToDevice);
+    }
 
     int unroll_block = 1024;
     int unroll_grid = ceil( (float) (C * x_unrolled_width) / 1024);
@@ -485,8 +489,8 @@ static void conv_forward_valid(const float *X, const int xdims[4],
                 x_unrolled_height, x_unrolled_width, 
                 device_input[j], device_X[j]); 
         }
-        
-        for(j=0; (i + j < ydims[0]) && (j < NUM_STREAMS); j++) 
+
+        for(j = 0; (i + j < ydims[0]) && (j < NUM_STREAMS); j++) 
         {
             if(wdims[2] == 1)
                 matrixMultiplyShared1<<< mult_grid, mult_block, 0, streams[j] >>>(device_X[j], device_Y[j], 
@@ -497,8 +501,8 @@ static void conv_forward_valid(const float *X, const int xdims[4],
                     filter_height, filter_width, 
                     x_unrolled_height, x_unrolled_width);
         }
-        
-        for(j=0; (i + j < ydims[0]) && (j < NUM_STREAMS); j++) 
+
+        for(j = 0; (i + j < ydims[0]) && (j < NUM_STREAMS); j++) 
         {
             device_roll_Y[j] = device_output + (i + j) * y_batch_size;
 
@@ -518,7 +522,8 @@ static void conv_forward_valid(const float *X, const int xdims[4],
         cudaFree(device_Y[i]);
         cudaFree(device_roll_Y[i]);
     }
-    cudaFree(filter);
+    if(wdims[2] == 1)
+        cudaFree(filter);
 }
 
 /*
@@ -614,7 +619,6 @@ void fully_forward(const float *X, const int xdims[2], float *W,
 
     dim3 dimGrid(ceil(ydims[1]/(float)TILEDIM), ceil(ydims[0]/(float)TILEDIM));
     dim3 dimBlock(TILEDIM, TILEDIM);
-
     matrixMultiplyShared<<<dimGrid,dimBlock>>>(device_input, device_w, device_output,
         xdims[0], xdims[1],
         wdims[0], wdims[1]);
