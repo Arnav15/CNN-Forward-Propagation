@@ -39,6 +39,8 @@ static int conv2dims[] = {5, 5, 32, 64};
 static int fc1dims[]   = {1024, 128};
 static int fc2dims[]   = {128, 10};
 
+__constant__ float filter1[KERNEL_WIDTH * KERNEL_WIDTH * TILEDIM];
+
 static int loadData(float *x, float *y) {
 // Open the data file
     const auto file_id =
@@ -261,15 +263,59 @@ __global__ void pooling(int in_width, int out_width, int in_channel, int out_cha
 /*
 * matrixMultiplyShared
 *   DESCRIPTION: The kernel to perform matrix multiplication using shared memory
-*   INPUTS: A, B, C, numARows, numAColumns, numCRows, numBColumns, numCRows, numCColumns 
+*   INPUTS: A, B, C, numARows, numAColumns, numCRows, numBColumns 
 *   OUTPUTS: none
 *   RETURN VALUE: none
 */
 
 __global__ void matrixMultiplyShared(float *A, float *B, float *C,
     int numARows, int numAColumns,
-    int numBRows, int numBColumns,
-    int numCRows, int numCColumns) 
+    int numBRows, int numBColumns) 
+{
+
+    float CValue = 0;
+
+    int Row = blockIdx.y * blockDim.y + threadIdx.y;
+    int Col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __shared__ float subTileM[TILEDIM][TILEDIM];
+    __shared__ float subTileN[TILEDIM][TILEDIM];
+
+    for (int i = 0; i < (ceil((float)numBRows/TILEDIM)); i++) 
+    {
+        if (i*TILEDIM + threadIdx.x < numAColumns && Row < numARows)   
+            subTileM[threadIdx.y][threadIdx.x] = A[Row * numAColumns + i * TILEDIM + threadIdx.x];
+        else                                                   
+            subTileM[threadIdx.y][threadIdx.x] = 0.0;
+
+        if (i*TILEDIM + threadIdx.y < numBRows && Col < numBColumns)   
+            subTileN[threadIdx.y][threadIdx.x] = B[(i * TILEDIM + threadIdx.y) * numBColumns + Col];
+        else                                                   
+            subTileN[threadIdx.y][threadIdx.x] = 0.0;
+
+        __syncthreads();
+
+        for (int j = 0; j < TILEDIM; j++) 
+            CValue += subTileM[threadIdx.y][j] * subTileN[j][threadIdx.x];
+
+        __syncthreads();
+    }
+
+    if (Row < numARows && Col < numBColumns) 
+        C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns)+(blockIdx.x * blockDim.x) + threadIdx.x] = CValue;
+}
+
+/*
+* matrixMultiplyShared1
+*   DESCRIPTION: The kernel to perform matrix multiplication using shared memory and global memory
+*   INPUTS: B, C, numARows, numAColumns, numCRows, numBColumns
+*   OUTPUTS: none
+*   RETURN VALUE: none
+*/
+
+__global__ void matrixMultiplyShared1(float *B, float *C,
+    int numARows, int numAColumns,
+    int numBRows, int numBColumns) 
 {
 
     float CValue = 0;
@@ -283,12 +329,12 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
     for (int i = 0; i < (ceil((float)numBRows/TILEDIM)); i++) 
     {
         if (i*TILEDIM + threadIdx.x < numAColumns && Row < numARows)   
-            subTileM[threadIdx.y][threadIdx.x] = A[Row*numAColumns + i*TILEDIM + threadIdx.x];
+            subTileM[threadIdx.y][threadIdx.x] = filter1[Row * numAColumns + i * TILEDIM + threadIdx.x];
         else                                                   
             subTileM[threadIdx.y][threadIdx.x] = 0.0;
 
         if (i*TILEDIM + threadIdx.y < numBRows && Col < numBColumns)   
-            subTileN[threadIdx.y][threadIdx.x] = B[(i*TILEDIM + threadIdx.y)*numBColumns + Col];
+            subTileN[threadIdx.y][threadIdx.x] = B[(i * TILEDIM + threadIdx.y) * numBColumns + Col];
         else                                                   
             subTileN[threadIdx.y][threadIdx.x] = 0.0;
 
@@ -301,8 +347,8 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
         __syncthreads();
     }
 
-    if (Row < numCRows && Col < numCColumns) 
-        C[((blockIdx.y * blockDim.y + threadIdx.y)*numCColumns)+(blockIdx.x*blockDim.x)+threadIdx.x]=CValue;
+    if (Row < numARows && Col < numBColumns) 
+        C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns) + (blockIdx.x * blockDim.x) + threadIdx.x] = CValue;
 }
 
 /*-----------------------------END OF KERNELS---------------------------------*/
@@ -413,8 +459,10 @@ static void conv_forward_valid(const float *X, const int xdims[4],
 
     unroll_filter(W, w_unrolled, M, C);
 
-    cudaMemcpy(filter, w_unrolled, filter_height * filter_width * sizeof(float), cudaMemcpyHostToDevice);
-
+    if(wdims[2] == 1)
+        cudaMemcpyToSymbol(filter1, w_unrolled, filter_height * filter_width * sizeof(float));
+    else
+        cudaMemcpy(filter, w_unrolled, filter_height * filter_width * sizeof(float), cudaMemcpyHostToDevice);
 
     int unroll_block = 1024;
     int unroll_grid = ceil( (float) (C * x_unrolled_width) / 1024);
@@ -440,10 +488,14 @@ static void conv_forward_valid(const float *X, const int xdims[4],
         
         for(j=0; (i + j < ydims[0]) && (j < NUM_STREAMS); j++) 
         {
-            matrixMultiplyShared<<< mult_grid, mult_block, 0, streams[j] >>>(filter, device_X[j], device_Y[j], 
-                filter_height, filter_width, 
-                x_unrolled_height, x_unrolled_width, 
-                filter_height, x_unrolled_width);
+            if(wdims[2] == 1)
+                matrixMultiplyShared1<<< mult_grid, mult_block, 0, streams[j] >>>(device_X[j], device_Y[j], 
+                    filter_height, filter_width, 
+                    x_unrolled_height, x_unrolled_width);
+            else
+                matrixMultiplyShared<<< mult_grid, mult_block, 0, streams[j] >>>(filter, device_X[j], device_Y[j], 
+                    filter_height, filter_width, 
+                    x_unrolled_height, x_unrolled_width);
         }
         
         for(j=0; (i + j < ydims[0]) && (j < NUM_STREAMS); j++) 
@@ -565,8 +617,7 @@ void fully_forward(const float *X, const int xdims[2], float *W,
 
     matrixMultiplyShared<<<dimGrid,dimBlock>>>(device_input, device_w, device_output,
         xdims[0], xdims[1],
-        wdims[0], wdims[1],
-        ydims[0], ydims[1]);
+        wdims[0], wdims[1]);
 
     cudaMemcpy(Y, device_output, sizeof(float) * ydims[0] * ydims[1], cudaMemcpyDeviceToHost);
 
