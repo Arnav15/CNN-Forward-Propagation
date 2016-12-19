@@ -1,1 +1,7 @@
-./rai -d Project
+The project was developed remotely using the RAI system. The specified commands to build and run the project were written in a bash file (rai-build.yml).
+We use the command following command to speed up the compilation as the system already contains the dependencies (like HDF5 and ZLib).  
+									cmake -DCONFIG_USE_HUNTER=OFF /src 
+The command to run the program is 
+						./ece408 /src/data/<dataset_file> /src/data/model.hdf5 <batch_size>
+For our remote development, once the rai-build.yml was set up, we build and ran the project by using the command - 
+										./rai -d <project folder>
