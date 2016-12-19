@@ -118,13 +118,13 @@ static void loadModel(float *conv1, float *conv2, float *fc1, float *fc2) {
 /*
 * convolution
 *   DESCRIPTION: Performs the convolution of the input map with the given filters
-*   INPUTS: in_width, out_width, C, out_channel, W_grid, X, W, Y
+*   INPUTS: in_width, out_width, C, out_channel, X, W, Y
 *   OUTPUTS: none
 *   RETURN VALUE: none
 */
 
 __global__ void convolution(int in_width, int out_width, int C, int out_channel, 
-    int W_grid, float* X, float* W, float* Y) 
+    float* X, float* W, float* Y) 
 {
     int i, j, n, m, h0, w0, h_base, w_base, h, w;
     int X_tile_width = TILE_WIDTH + KERNEL_WIDTH-1;
@@ -135,8 +135,8 @@ __global__ void convolution(int in_width, int out_width, int C, int out_channel,
     m = blockIdx.y;
     h0 = threadIdx.x;
     w0 = threadIdx.y;
-    h_base = (blockIdx.z / W_grid) * TILE_WIDTH;
-    w_base = (blockIdx.z % W_grid) * TILE_WIDTH;
+    h_base = (blockIdx.z / POOL_SIZE) * TILE_WIDTH;
+    w_base = (blockIdx.z % POOL_SIZE) * TILE_WIDTH;
     h = h_base+ h0;
     w = w_base+ w0;
     float acc = 0.0;
@@ -557,7 +557,7 @@ void conv_forward_valid2(const float *X, const int xdims[4],
     cudaMemcpy(filter_conv, W, sizeof(float) * conv2dims[0] * conv2dims[1] * conv2dims[2] * conv2dims[3], cudaMemcpyHostToDevice);
 
     convolution<<<dimGrid, dimBlock, shmem_size>>>(xdims[1], ydims[1], xdims[3], ydims[3],
-        2, device_input, filter_conv, device_output);
+        device_input, filter_conv, device_output);
 
     cudaMemcpy(Y, device_output, sizeof(float) * ydims[0] * ydims[1] * ydims[2] * ydims[3], cudaMemcpyDeviceToHost);
 
