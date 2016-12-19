@@ -301,8 +301,10 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
         __syncthreads();
     }
 
-    if (Row < numARows && Col < numBColumns) 
-        C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns)+(blockIdx.x * blockDim.x) + threadIdx.x] = CValue;
+    if (Row < numARows && Col < numBColumns && CValue < 0) 
+        C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns)+ (blockIdx.x * blockDim.x) + threadIdx.x] = 0;
+    else if(Row < numARows && Col < numBColumns)
+        C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns) + (blockIdx.x * blockDim.x) + threadIdx.x] = CValue;
 }
 
 /*
@@ -347,8 +349,48 @@ __global__ void matrixMultiplyShared1(float *B, float *C,
         __syncthreads();
     }
 
-    if (Row < numARows && Col < numBColumns) 
+    if (Row < numARows && Col < numBColumns && CValue < 0) 
+        C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns) + (blockIdx.x * blockDim.x) + threadIdx.x] = 0;
+    else if(Row < numARows && Col < numBColumns)
         C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns) + (blockIdx.x * blockDim.x) + threadIdx.x] = CValue;
+}
+
+__global__ void matrixMultiplyShared_norm(float *A, float *B, float *C,
+    int numARows, int numAColumns,
+    int numBRows, int numBColumns) 
+{
+
+    float CValue = 0;
+
+    int Row = blockIdx.y * blockDim.y + threadIdx.y;
+    int Col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __shared__ float subTileM[TILEDIM][TILEDIM];
+    __shared__ float subTileN[TILEDIM][TILEDIM];
+
+    for (int i = 0; i < (ceil((float)numBRows/TILEDIM)); i++) 
+    {
+        if (i*TILEDIM + threadIdx.x < numAColumns && Row < numARows)   
+            subTileM[threadIdx.y][threadIdx.x] = A[Row * numAColumns + i * TILEDIM + threadIdx.x];
+        else                                                   
+            subTileM[threadIdx.y][threadIdx.x] = 0.0;
+
+        if (i*TILEDIM + threadIdx.y < numBRows && Col < numBColumns)   
+            subTileN[threadIdx.y][threadIdx.x] = B[(i * TILEDIM + threadIdx.y) * numBColumns + Col];
+        else                                                   
+            subTileN[threadIdx.y][threadIdx.x] = 0.0;
+
+        __syncthreads();
+
+        for (int j = 0; j < TILEDIM; j++) 
+            CValue += subTileM[threadIdx.y][j] * subTileN[j][threadIdx.x];
+
+        __syncthreads();
+    }
+
+    if (Row < numARows && Col < numBColumns) 
+        C[((blockIdx.y * blockDim.y + threadIdx.y) * numBColumns)+(blockIdx.x * blockDim.x) + threadIdx.x] = CValue;
+
 }
 
 
@@ -375,13 +417,6 @@ void unroll_filter(const float * W, float * w, int M, int C) {
 static void relu4(float *X, const int xdims[4]) 
 {
     for (const auto i : range(0, xdims[0] * xdims[1] * xdims[2] * xdims[3]))
-        X[i] = (X[i] < 0) ? 0 : X[i];
-}
-
-// Recified linear unit 2d
-static void relu2(float *X, const int xdims[2]) 
-{
-    for (const auto i : range(0, xdims[0] * xdims[1]))
         X[i] = (X[i] < 0) ? 0 : X[i];
 }
 
@@ -604,7 +639,7 @@ void average_pool(const float *X, const int xdims[4],
 */
 
 void fully_forward(const float *X, const int xdims[2], float *W,
-    const int wdims[2], float *Y, const int ydims[2]) 
+    const int wdims[2], float *Y, const int ydims[2], int ver) 
 {
     float* device_input;
     float* device_output;
@@ -619,9 +654,15 @@ void fully_forward(const float *X, const int xdims[2], float *W,
 
     dim3 dimGrid(ceil(ydims[1]/(float)TILEDIM), ceil(ydims[0]/(float)TILEDIM));
     dim3 dimBlock(TILEDIM, TILEDIM);
-    matrixMultiplyShared<<<dimGrid,dimBlock>>>(device_input, device_w, device_output,
-        xdims[0], xdims[1],
-        wdims[0], wdims[1]);
+    if(ver == 1)
+        matrixMultiplyShared<<<dimGrid,dimBlock>>>(device_input, device_w, device_output,
+            xdims[0], xdims[1],
+            wdims[0], wdims[1]);
+    else
+        matrixMultiplyShared_norm<<<dimGrid,dimBlock>>>(device_input, device_w, device_output,
+            xdims[0], xdims[1],
+            wdims[0], wdims[1]);
+
 
     cudaMemcpy(Y, device_output, sizeof(float) * ydims[0] * ydims[1], cudaMemcpyDeviceToHost);
 
@@ -643,10 +684,12 @@ void forward_operation(float *x, float *conv1, float *conv2, float *fc1, float *
     if(xdims[0] >= 100)
         conv_forward_valid(x, xdims, conv1, conv1dims, a, adims);
     else
+    {
         conv_forward_valid2(x, xdims, conv1, conv1dims, a, adims);
+        // relu layer
+        relu4(a, adims);
+    }
 
-// relu layer
-    relu4(a, adims);
 
 // average pooling
     const int pool_size = 2;
@@ -660,11 +703,14 @@ void forward_operation(float *x, float *conv1, float *conv2, float *fc1, float *
     auto c = zeros<float>(cdims);
     if(bdims[0] >= 100)
         conv_forward_valid(b, bdims, conv2, conv2dims, c, cdims);
-    else 
+    else
+    {
         conv_forward_valid2(b, bdims, conv2, conv2dims, c, cdims);
+        // relu
+        relu4(c, cdims);
+    }
 
-// relu
-    relu4(c, cdims);
+
 
 // average pooling
     const int ddims[] = {cdims[0], cdims[1] / pool_size, cdims[2] / pool_size, cdims[3]};
@@ -679,16 +725,16 @@ void forward_operation(float *x, float *conv1, float *conv2, float *fc1, float *
     const int edims[] = {ddims[0], fc1dims[1]};
     auto e            = zeros<float>(edims);
 
-    fully_forward(d, ddims2, fc1, fc1dims, e, edims);
+    fully_forward(d, ddims2, fc1, fc1dims, e, edims, 1);
 
 // relu
-    relu2(e, edims);
+    //relu2(e, edims);
 
 // matrix multiplication
     const int fdims[] = {edims[0], fc2dims[1]};
     auto f            = zeros<float>(fdims);
 
-    fully_forward(e, edims, fc2, fc2dims, f, fdims);
+    fully_forward(e, edims, fc2, fc2dims, f, fdims, 0);
 
     argmax(f, fdims, out);
 

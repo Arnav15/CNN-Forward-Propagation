@@ -15,3 +15,6 @@ commands:
     - ./ece408 /src/data/test10.hdf5 /src/data/model.hdf5 10
     - ./ece408 /src/data/test100.hdf5 /src/data/model.hdf5 100
     - ./ece408 /src/data/testfull.hdf5 /src/data/model.hdf5 10000
+    - >-
+      nvprof --cpu-profiling on --export-profile analysis.nvprof --
+      ./ece408 /src/data/testfull.hdf5 /src/data/model.hdf5 10000
