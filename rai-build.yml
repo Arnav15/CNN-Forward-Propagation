@@ -11,4 +11,7 @@ commands:
     - echo "Building project"
     - cmake -DCONFIG_USE_HUNTER=OFF /src
     - make
+    - ./ece408 /src/data/test2.hdf5 /src/data/model.hdf5 2
+    - ./ece408 /src/data/test10.hdf5 /src/data/model.hdf5 10
+    - ./ece408 /src/data/test100.hdf5 /src/data/model.hdf5 100
     - ./ece408 /src/data/testfull.hdf5 /src/data/model.hdf5 10000

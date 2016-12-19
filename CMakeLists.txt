@@ -91,6 +91,7 @@ add_compile_options(-Wno-vla)
 add_compile_options(-Wno-unused-variable)
 list(APPEND CUDA_NVCC_FLAGS -O3)
 list(APPEND CUDA_NVCC_FLAGS -use_fast_math)
+list(APPEND CUDA_NVCC_FLAGS -restrict)
 
 # Add debugging to CUDA NVCC flags (for NVidia's NSight tools)
 if(CMAKE_BUILD_TYPE MATCHES DEBUG)
